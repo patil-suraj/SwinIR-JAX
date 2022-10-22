@@ -8,7 +8,7 @@ from flax.core.frozen_dict import FrozenDict
 from jax import numpy as jnp
 from transformers import FlaxPreTrainedModel
 
-from .configuration_swin_ir import SwinIRConfig
+from configuration_swin_ir import SwinIRConfig
 
 Array = Any
 PRNGKey = Any
@@ -117,10 +117,10 @@ class MLP(nn.Module):
             bias_init=nn.initializers.normal(stddev=1e-6),
         )
 
-        hidden_states = Dense(features=self.hidden_dim)(hidden_states)
+        hidden_states = Dense(features=self.hidden_dim, name="fc1")(hidden_states)
         hidden_states = nn.gelu(hidden_states)
         hidden_states = nn.Dropout(rate=self.dropout_rate)(hidden_states, deterministic=deterministic)
-        hidden_states = Dense(features=actual_out_dim)(hidden_states)
+        hidden_states = Dense(features=actual_out_dim, name="fc2")(hidden_states)
         hidden_states = nn.Dropout(rate=self.dropout_rate)(hidden_states, deterministic=deterministic)
         return hidden_states
 
@@ -356,6 +356,7 @@ class Conv3Block(nn.Module):
             kernel_size=(3, 3),
             strides=(1, 1),
             padding=((1, 1), (1, 1)),
+            name="conv_0",
             dtype=self.dtype,
         )
         self.conv2 = nn.Conv(
@@ -363,6 +364,7 @@ class Conv3Block(nn.Module):
             kernel_size=(1, 1),
             strides=(1, 1),
             padding="VALID",
+            name="conv_2",
             dtype=self.dtype,
         )
         self.conv3 = nn.Conv(
@@ -370,6 +372,7 @@ class Conv3Block(nn.Module):
             kernel_size=(3, 3),
             strides=(1, 1),
             padding=((1, 1), (1, 1)),
+            name="conv_4",
             dtype=self.dtype,
         )
 
@@ -461,6 +464,7 @@ class SwinIRModule(nn.Module):
     dtype: jnp.dtype = jnp.float32
 
     def setup(self):
+        self.num_feat = 64
         conv_3x1X1 = partial(
             nn.Conv,
             kernel_size=(3, 3),
@@ -530,13 +534,13 @@ class SwinIRModule(nn.Module):
         ################################ 3, high quality image reconstruction ################################
         if self.upsampler == "nearest+conv":
             # for real-world SR (less artifacts)
-            self.conv_before_upsample = conv_3x1X1(self.num_features)
-            self.conv_up1 = conv_3x1X1(self.num_features)
+            self.conv_before_upsample = conv_3x1X1(self.num_feat, name="conv_before_upsample_0")
+            self.conv_up1 = conv_3x1X1(self.num_feat)
 
             if self.upscale == 4:
-                self.conv_up2 = conv_3x1X1(self.num_features)
+                self.conv_up2 = conv_3x1X1(self.num_feat)
 
-            self.conv_hr = conv_3x1X1(self.num_features)
+            self.conv_hr = conv_3x1X1(self.num_feat)
             self.conv_last = conv_3x1X1(self.in_chans)
         else:
             raise NotImplementedError
@@ -643,8 +647,7 @@ class SwinIRPretrainedModel(FlaxPreTrainedModel):
 
     def init_weights(self, rng: jax.random.PRNGKey, input_shape: Tuple) -> FrozenDict:
         # init input tensors
-        shape = (1, self.config.sample_size, self.config.sample_size, self.config.in_channels)
-        pixel_values = jnp.zeros(shape, dtype=jnp.float32)
+        pixel_values = jnp.zeros(input_shape, dtype=jnp.float32)
 
         params_rng, dropout_rng = jax.random.split(rng)
         rngs = {"params": params_rng, "dropout": dropout_rng}

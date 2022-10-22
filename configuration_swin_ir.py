@@ -2,6 +2,7 @@ from typing import Tuple
 
 from transformers import PretrainedConfig
 
+
 class SwinIRConfig(PretrainedConfig):
     def __init__(
         self,

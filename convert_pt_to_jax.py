@@ -92,6 +92,9 @@ def convert_pytorch_state_dict_to_flax(pt_state_dict, flax_model):
 def convert_params(pt_state_dict, fx_model):
     keys = list(pt_state_dict.keys())
     for key in keys:
+        if "relative_position_index" in key or "attn_mask" in key:
+            del pt_state_dict[key]
+            continue
         renamed_key = rename_key(key)
         pt_state_dict[renamed_key] = pt_state_dict.pop(key)
 

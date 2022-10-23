@@ -202,18 +202,15 @@ class WindowAttention(nn.Module):
 
 
 class SwinTransformerBlock(nn.Module):
-    dim: int
+    config: SwinIRConfig
     input_resolution: Tuple[int]
     num_heads: int
-    window_size: int
     shift_size: int = 0
-    mlp_ratio: float = 4
-    qkv_bias: Optional[bool] = True
-    drop_rate: Optional[float] = 0.0
-    attn_drop_rate: Optional[float] = 0.0
-    drop_path_rate: Optional[float] = 0.0
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
+        self.window_size = self.config.window_size
+
         if min(self.input_resolution) <= self.window_size:
             self.shift_size = 0
             self.window_size = min(self.input_resolution)
@@ -222,17 +219,17 @@ class SwinTransformerBlock(nn.Module):
 
         self.norm1 = nn.LayerNorm(epsilon=1e-05)
         self.attn = WindowAttention(
-            self.dim,
+            self.config.embed_dim,
             window_size=self.window_size,
             num_heads=self.num_heads,
-            qkv_bias=self.qkv_bias,
-            attn_drop_rate=self.attn_drop_rate,
-            proj_drop_rate=self.drop_rate,
+            qkv_bias=self.config.qkv_bias,
+            attn_drop_rate=self.config.attn_drop_rate,
+            proj_drop_rate=self.config.drop_rate,
         )
 
         self.norm2 = nn.LayerNorm(epsilon=1e-05)
-        mlp_hidden_dim = int(self.dim * self.mlp_ratio)
-        self.mlp = MLP(hidden_dim=mlp_hidden_dim, dropout_rate=self.drop_rate)
+        mlp_hidden_dim = int(self.config.embed_dim * self.config.mlp_ratio)
+        self.mlp = MLP(hidden_dim=mlp_hidden_dim, dropout_rate=self.config.drop_rate)
 
         if self.shift_size > 0:
             self.attn_mask = self.create_attn_mask(self.shift_size, self.input_resolution, self.window_size)
@@ -309,33 +306,21 @@ class SwinTransformerBlock(nn.Module):
 
 
 class BasicLayer(nn.Module):
-    dim: int
+    config: SwinIRConfig
     input_resolution: Tuple[int]
     depth: int
     num_heads: int
-    window_size: int
-    mlp_ratio: float = 4
-    qkv_bias: Optional[bool] = True
-    drop_rate: Optional[float] = 0.0
-    attn_drop_rate: Optional[float] = 0.0
-    drop_path_rate: Optional[float] = 0.0
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         depths = [i for i in range(self.depth)]
         self.blocks = [
             SwinTransformerBlock(
-                dim=self.dim,
+                self.config,
                 input_resolution=self.input_resolution,
                 num_heads=self.num_heads,
-                window_size=self.window_size,
-                shift_size=0 if (i % 2 == 0) else self.window_size // 2,
-                mlp_ratio=self.mlp_ratio,
-                qkv_bias=self.qkv_bias,
-                drop_rate=self.drop_rate,
-                attn_drop_rate=self.attn_drop_rate,
-                drop_path_rate=self.drop_path_rate[i]
-                if isinstance(self.drop_path_rate, tuple)
-                else self.drop_path_rate,
+                shift_size=0 if (i % 2 == 0) else self.config.window_size // 2,
+                dtype=self.dtype,
             )
             for i in depths
         ]
@@ -386,51 +371,42 @@ class Conv3Block(nn.Module):
 
 
 class RSTB(nn.Module):
+    config: SwinIRConfig
     input_resolution: Tuple[int]
-    img_size: Tuple[int] = (224, 224)
-    patch_size: Tuple[int] = (4, 4)
-    in_chans: int = 3
-    embed_dim: int = 96
     depths: int = 6
     num_heads: int = 6
-    window_size: int = 8
-    mlp_ratio: int = 4
-    qkv_bias: bool = True
-    drop_rate: float = 0.0
-    attn_drop_rate: float = 0.0
-    drop_path_rate: float = 0.1
-    patch_norm: bool = True
-    resi_connection: bool = "1conv"
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
+        self.embed_dim = self.config.embed_dim
+
         self.residual_group = BasicLayer(
-            dim=self.embed_dim,
+            self.config,
             input_resolution=self.input_resolution,
             depth=self.depths,
             num_heads=self.num_heads,
-            window_size=self.window_size,
-            mlp_ratio=self.mlp_ratio,
-            qkv_bias=self.qkv_bias,
-            drop_rate=self.drop_rate,
-            attn_drop_rate=self.attn_drop_rate,
-            drop_path_rate=self.drop_path_rate,
+            dtype=self.dtype,
         )
 
-        if self.resi_connection == "1conv":
+        if self.config.resi_connection == "1conv":
             self.conv = nn.Conv(
                 self.embed_dim,
                 kernel_size=(3, 3),
                 strides=(1, 1),
                 padding=((1, 1), (1, 1)),
             )
-        elif self.resi_connection == "3conv":
+        elif self.config.resi_connection == "3conv":
             self.conv = Conv3Block(self.embed_dim)
         else:
-            raise ValueError(f"Unknown resi_connection {self.resi_connection}")
+            raise ValueError(f"Unknown resi_connection {self.config.resi_connection}")
 
-        self.patch_embed = PatchEmbed(img_size=self.img_size, patch_size=self.patch_size, patch_norm=False)
+        self.patch_embed = PatchEmbed(
+            img_size=self.config.img_size, patch_size=self.config.patch_size, patch_norm=False
+        )
 
-        self.patch_unembed = PatchUnEmbed(img_size=self.img_size, patch_size=self.patch_size, embed_dim=self.embed_dim)
+        self.patch_unembed = PatchUnEmbed(
+            img_size=self.config.img_size, patch_size=self.config.patch_size, embed_dim=self.embed_dim
+        )
 
     def __call__(self, hidden_states, x_size, deterministic=True):
         residual = hidden_states
@@ -443,28 +419,18 @@ class RSTB(nn.Module):
 
 
 class SwinIRModule(nn.Module):
-    img_size: Tuple[int] = (64, 64)
-    patch_size: Tuple[int] = (1, 1)
-    in_chans: int = 3
-    embed_dim: int = 96
-    depths: Tuple[int] = (6, 6, 6, 6)
-    num_heads: Tuple[int] = (6, 6, 6, 6)
-    window_size: int = 7
-    mlp_ratio: int = 4
-    qkv_bias: bool = True
-    drop_rate: float = 0.0
-    attn_drop_rate: float = 0.0
-    drop_path_rate: float = 0.1
-    ape: bool = False
-    patch_norm: bool = True
-    upscale: int = 2
-    img_range: float = 1.0
-    upsampler: str = ""
-    resi_connection: str = "1conv"
+    config: SwinIRConfig
     dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         self.num_feat = 64
+        self.num_layers = len(self.config.depths)
+        self.embed_dim = self.config.embed_dim
+        self.num_features = self.config.embed_dim
+        self.patch_size = self.config.patch_size
+        self.img_size = self.config.img_size
+        self.window_size = self.config.window_size
+
         conv_3x1X1 = partial(
             nn.Conv,
             kernel_size=(3, 3),
@@ -473,7 +439,7 @@ class SwinIRModule(nn.Module):
             dtype=self.dtype,
         )
 
-        if self.in_chans == 3:
+        if self.config.in_chans == 3:
             self.rgb_mean = jnp.array([0.4488, 0.4371, 0.4040]).reshape(1, 1, 1, 3)
         else:
             self.rgb_mean = jnp.zeros(1, 1, 1, 1)
@@ -484,18 +450,21 @@ class SwinIRModule(nn.Module):
 
         #####################################################################################################
         ################################### 2, deep feature extraction ######################################
-        self.num_layers = len(self.depths)
-        self.num_features = self.embed_dim
 
         # split image into non-overlapping patches
-        self.patch_embed = PatchEmbed(img_size=self.img_size, patch_size=self.patch_size, patch_norm=self.patch_norm)
-        self.patches_resolution = [self.img_size[0] // self.patch_size[0], self.img_size[1] // self.patch_size[1]]
+        self.patch_embed = PatchEmbed(
+            img_size=self.img_size, patch_size=self.patch_size, patch_norm=self.config.patch_norm
+        )
+        self.patches_resolution = (
+            self.img_size[0] // self.patch_size[0],
+            self.img_size[1] // self.patch_size[1],
+        )
 
         # merge non-overlapping patches into image
         self.patch_unembed = PatchUnEmbed(img_size=self.img_size, patch_size=self.patch_size, embed_dim=self.embed_dim)
 
         # # absolute position embedding
-        if self.ape:
+        if self.config.ape:
             self.absolute_pos_embed = self.param(
                 "absolute_pos_embed", jax.nn.initializers.zeros, (1, self.num_patches, self.embed_dim)
             )
@@ -503,21 +472,11 @@ class SwinIRModule(nn.Module):
         layers = []
         for i_layer in range(self.num_layers):
             layer = RSTB(
+                config=self.config,
                 input_resolution=self.patches_resolution,
-                img_size=self.img_size,
-                patch_size=self.patch_size,
-                in_chans=self.in_chans,
-                embed_dim=self.embed_dim,
-                depths=self.depths[i_layer],
-                num_heads=self.num_heads[i_layer],
-                window_size=self.window_size,
-                mlp_ratio=self.mlp_ratio,
-                qkv_bias=self.qkv_bias,
-                drop_rate=self.drop_rate,
-                attn_drop_rate=self.attn_drop_rate,
-                drop_path_rate=self.drop_path_rate,
-                patch_norm=self.patch_norm,
-                resi_connection=self.resi_connection,
+                depths=self.config.depths[i_layer],
+                num_heads=self.config.num_heads[i_layer],
+                dtype=self.dtype,
             )
             layers.append(layer)
         self.layers = layers
@@ -525,87 +484,94 @@ class SwinIRModule(nn.Module):
         self.norm = nn.LayerNorm(epsilon=1e-5)
 
         # build the last conv layer in deep feature extraction
-        if self.resi_connection == "1conv":
+        if self.config.resi_connection == "1conv":
             self.conv_after_body = conv_3x1X1(self.embed_dim)
-        elif self.resi_connection == "3conv":
+        elif self.config.resi_connection == "3conv":
             self.conv_after_body = Conv3Block(self.embed_dim)
 
         #####################################################################################################
         ################################ 3, high quality image reconstruction ################################
-        if self.upsampler == "nearest+conv":
+        if self.config.upsampler == "nearest+conv":
             # for real-world SR (less artifacts)
             self.conv_before_upsample = conv_3x1X1(self.num_feat, name="conv_before_upsample_0")
             self.conv_up1 = conv_3x1X1(self.num_feat)
 
-            if self.upscale == 4:
+            if self.config.upscale == 4:
                 self.conv_up2 = conv_3x1X1(self.num_feat)
 
             self.conv_hr = conv_3x1X1(self.num_feat)
-            self.conv_last = conv_3x1X1(self.in_chans)
+            self.conv_last = conv_3x1X1(self.config.in_chans)
         else:
             raise NotImplementedError
 
-    def check_image_size(self, x):
-        _, h, w, _ = x.shape
-        mod_pad_h = (self.window_size - h % self.window_size) % self.window_size
-        mod_pad_w = (self.window_size - w % self.window_size) % self.window_size
-        x = jnp.pad(x, ((0, 0), (0, mod_pad_h), (0, mod_pad_w), (0, 0)), "reflect")
-        return x
-
-    def forward_features(self, x):
-        x_size = (x.shape[1], x.shape[2])
-        x = self.patch_embed(x)
-        if self.ape:
-            x = x + self.absolute_pos_embed
-
-        for layer in self.layers:
-            x = layer(x, x_size)
-
-        x = self.norm(x)  # B L C
-        x = self.patch_unembed(x, x_size)
-
-        return x
+    def pad_image_if_needed(self, pixel_values):
+        _, height, width, _ = pixel_values.shape
+        mod_pad_h = (self.window_size - height % self.window_size) % self.window_size
+        mod_pad_w = (self.window_size - width % self.window_size) % self.window_size
+        pixel_values = jnp.pad(pixel_values, ((0, 0), (0, mod_pad_h), (0, mod_pad_w), (0, 0)), "reflect")
+        return pixel_values
 
     def __call__(self, pixel_values, deterministic=True):
-        H, W = pixel_values.shape[1], pixel_values.shape[2]
-        
-        pixel_values = self.check_image_size(pixel_values)
-        pixel_values = (pixel_values - self.rgb_mean) * self.img_range
+        original_height, original_Width = pixel_values.shape[1], pixel_values.shape[2]
 
-        if self.upsampler == "nearest+conv":
-            # for real-world SR
-            x = self.conv_first(pixel_values)
-            residuel = x
-            x = self.forward_features(x)
-            x = self.conv_after_body(x) + residuel
-            x = self.conv_before_upsample(x)
-            x = nn.leaky_relu(x)
-            batch, height, width, channel = x.shape
-            x = jax.image.resize(
-                x,
+        pixel_values = self.pad_image_if_needed(pixel_values)
+        pixel_values = (pixel_values - self.rgb_mean) * self.config.img_range
+
+        # for real-world SR
+        if self.config.upsampler == "nearest+conv":
+            hidden_states = self.conv_first(pixel_values)
+            residuel = hidden_states
+
+            # body
+            x_size = (hidden_states.shape[1], hidden_states.shape[2])
+            hidden_states = self.patch_embed(hidden_states) # (batch, num_patches, channels)
+            
+            if self.config.ape:
+                hidden_states = hidden_states + self.absolute_pos_embed
+
+            for layer in self.layers:
+                hidden_states = layer(hidden_states, x_size) # (batch, num_patches, channels)
+
+            hidden_states = self.norm(hidden_states)
+            hidden_states = self.patch_unembed(hidden_states, x_size) # (batch, height, width, channels)
+
+            # end of body
+            
+            hidden_states = self.conv_after_body(hidden_states) + residuel
+            
+            hidden_states = self.conv_before_upsample(hidden_states)
+            hidden_states = nn.leaky_relu(hidden_states)
+
+            # upsample 2x
+            batch, height, width, channel = hidden_states.shape
+            hidden_states = jax.image.resize(
+                hidden_states,
                 shape=(batch, height * 2, width * 2, channel),
                 method="nearest",
             )
-            x = self.conv_up1(x)
-            x = nn.leaky_relu(x, negative_slope=0.2)
-            if self.upscale == 4:
-                batch, height, width, channel = x.shape
-                x = jax.image.resize(
-                    x,
+            hidden_states = self.conv_up1(hidden_states)
+            hidden_states = nn.leaky_relu(hidden_states, negative_slope=0.2)
+            
+            if self.config.upscale == 4:
+                # upsample 2x
+                batch, height, width, channel = hidden_states.shape
+                hidden_states = jax.image.resize(
+                    hidden_states,
                     shape=(batch, height * 2, width * 2, channel),
                     method="nearest",
                 )
-                x = self.conv_up2(x)
-                x = nn.leaky_relu(x, negative_slope=0.2)
-            x = self.conv_hr(x)
-            x = nn.leaky_relu(x, negative_slope=0.2)
-            x = self.conv_last(x)
+                hidden_states = self.conv_up2(hidden_states)
+                hidden_states = nn.leaky_relu(hidden_states, negative_slope=0.2)
+            
+            hidden_states = self.conv_hr(hidden_states)
+            hidden_states = nn.leaky_relu(hidden_states, negative_slope=0.2)
+            hidden_states = self.conv_last(hidden_states)
         else:
             raise NotImplementedError
 
-        x = x / self.img_range + self.rgb_mean
+        hidden_states = hidden_states / self.config.img_range + self.rgb_mean
 
-        return x[:, : H * self.upscale, : W * self.upscale, :]
+        return hidden_states[:, : original_height * self.config.upscale, : original_Width * self.config.upscale, :]
 
 
 class SwinIRPretrainedModel(FlaxPreTrainedModel):
@@ -622,28 +588,7 @@ class SwinIRPretrainedModel(FlaxPreTrainedModel):
         _do_init: bool = True,
         **kwargs,
     ):
-        module = self.module_class(
-            img_size=config.img_size,
-            patch_size=config.patch_size,
-            in_chans=config.in_chans,
-            embed_dim=config.embed_dim,
-            depths=config.depths,
-            num_heads=config.num_heads,
-            window_size=config.window_size,
-            mlp_ratio=config.mlp_ratio,
-            qkv_bias=config.qkv_bias,
-            drop_rate=config.drop_rate,
-            attn_drop_rate=config.attn_drop_rate,
-            drop_path_rate=config.drop_path_rate,
-            ape=config.ape,
-            patch_norm=config.patch_norm,
-            upscale=config.upscale,
-            img_range=config.img_range,
-            upsampler=config.upsampler,
-            resi_connection=config.resi_connection,
-            dtype=dtype,
-            **kwargs,
-        )
+        module = self.module_class(config=config, dtype=dtype, **kwargs)
         super().__init__(config, module, input_shape=input_shape, seed=seed, dtype=dtype, _do_init=_do_init)
 
     def init_weights(self, rng: jax.random.PRNGKey, input_shape: Tuple) -> FrozenDict:

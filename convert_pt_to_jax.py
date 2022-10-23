@@ -11,8 +11,6 @@ regex = r"\w+[.]\d+"
 
 
 def rename_key(key):
-    key = key.replace("conv_after_body.", "conv_after_body.conv.")
-
     pats = re.findall(regex, key)
     for pat in pats:
         key = key.replace(pat, "_".join(pat.split(".")))
@@ -89,12 +87,15 @@ def convert_pytorch_state_dict_to_flax(pt_state_dict, flax_model):
     return unflatten_dict(flax_state_dict)
 
 
-def convert_params(pt_state_dict, fx_model):
+def convert_params(pt_state_dict, fx_model, resi_connection):
     keys = list(pt_state_dict.keys())
     for key in keys:
         if "relative_position_index" in key or "attn_mask" in key:
             del pt_state_dict[key]
             continue
+
+        if resi_connection == "3conv":
+            key = key.replace("conv_after_body.", "conv_after_body.conv.")
         renamed_key = rename_key(key)
         pt_state_dict[renamed_key] = pt_state_dict.pop(key)
 
@@ -109,6 +110,7 @@ def convert_swin_to_jax(pt_model_path, save_path, task="real_sr", scale=4, large
         state_dict = state_dict[param_key_g] if param_key_g in state_dict.keys() else state_dict
 
         if large_model:
+            resi_connection = "3conv"
             config = SwinIRConfig(
                 upscale=scale,
                 embed_dim=240,
@@ -120,6 +122,7 @@ def convert_swin_to_jax(pt_model_path, save_path, task="real_sr", scale=4, large
                 resi_connection="3conv",
             )
         else:
+            resi_connection = "1conv"
             config = SwinIRConfig(
                 upscale=scale,
                 embed_dim=180,
@@ -132,7 +135,7 @@ def convert_swin_to_jax(pt_model_path, save_path, task="real_sr", scale=4, large
             )
 
         fx_model = FlaxSwinIR(config, _do_init=False)
-        fx_params = convert_params(state_dict, fx_model)
+        fx_params = convert_params(state_dict, fx_model, resi_connection)
         fx_model.save_pretrained(save_path, params=fx_params)
         return fx_model, fx_params
     else:

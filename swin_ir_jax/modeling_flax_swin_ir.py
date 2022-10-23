@@ -618,5 +618,5 @@ class SwinIRPretrainedModel(FlaxPreTrainedModel):
         )
 
 
-class SwinIR(SwinIRPretrainedModel):
+class FlaxSwinIR(SwinIRPretrainedModel):
     module_class = SwinIRModule

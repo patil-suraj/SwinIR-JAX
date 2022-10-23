@@ -134,7 +134,9 @@ class WindowAttention(nn.Module):
             (2 * self.window_size - 1) * (2 * self.window_size - 1),
             self.num_heads,
         )  # # 2*Wh-1 * 2*Ww-1, nH
-        self.relative_position_bias_table = self.param("relative_position_bias_table", nn.zeros, bias_shape)
+        self.relative_position_bias_table = self.param(
+            "relative_position_bias_table", nn.initializers.normal(0.02), bias_shape
+        )
 
         # get pair-wise relative position index for each token inside the window
         coords_h = np.arange(self.window_size)

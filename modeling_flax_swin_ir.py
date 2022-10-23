@@ -540,7 +540,7 @@ class SwinIRModule(nn.Module):
                 hidden_states = hidden_states + self.absolute_pos_embed
 
             for layer in self.layers:
-                hidden_states = layer(hidden_states, x_size) # (batch, num_patches, channels)
+                hidden_states = layer(hidden_states, x_size, deterministic=deterministic) # (batch, num_patches, channels)
 
             hidden_states = self.norm(hidden_states)
             hidden_states = self.patch_unembed(hidden_states, x_size) # (batch, height, width, channels)

@@ -1,4 +1,4 @@
-from modeling_flax_swin_ir import *
+from swin_ir_jax.modeling_flax_swin_ir import *
 
 model = SwinIR(
     upscale=2,

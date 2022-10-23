@@ -4,7 +4,7 @@ import re
 import jax.numpy as jnp
 from flax.traverse_util import flatten_dict, unflatten_dict
 
-from modeling_flax_swin_ir import SwinIR, SwinIRConfig
+from swin_ir_jax import SwinIR, SwinIRConfig
 
 regex = r"\w+[.]\d+"
 

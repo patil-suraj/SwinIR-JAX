@@ -8,7 +8,7 @@ from flax.core.frozen_dict import FrozenDict
 from jax import numpy as jnp
 from transformers import FlaxPreTrainedModel
 
-from configuration_swin_ir import SwinIRConfig
+from .configuration_swin_ir import SwinIRConfig
 
 
 def window_partition(tensor, window_size):

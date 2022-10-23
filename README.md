@@ -8,6 +8,8 @@ As of now, this repo only supports the Real SR task from SwinIR, pull requests a
 
 [ <a href="https://colab.research.google.com/gist/JingyunLiang/a5e3e54bc9ef8d7bf594f6fee8208533/swinir-demo-on-real-world-image-sr.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="google colab logo"></a>](https://colab.research.google.com/github/patil-suraj/SwinIR-JAX/blob/main/swin_ir_jax.ipynb)
 
+The checkpoints are available on the [huggingface hub](https://huggingface.co/models?other=swin-ir).
+
 ## Citation
     @article{liang2021swinir,
       title={SwinIR: Image Restoration Using Swin Transformer},

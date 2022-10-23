@@ -1,4 +1,4 @@
-check_dirs := "."
+check_dirs := "swin_ir_jax"
 
 quality:
 	black -l 119 --check --preview  $(check_dirs)

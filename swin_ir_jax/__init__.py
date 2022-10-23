@@ -5,9 +5,13 @@ import numpy as np
 from .configuration_swin_ir import SwinIRConfig
 from .modeling_flax_swin_ir import FlaxSwinIR
 
-def prepare_inputs(images: List[PIL.Image], window_size=8):
+def prepare_inputs(images: List["PIL.Image"], window_size=8):
+    """
+    Prepare inputs for SwinIR model. Assumes that the input `images` are of same size.
+    """
     images = [np.array(image, dtype=np.float32) for image in images]
     images = np.concatenate([image[np.newaxis, ...] for image in images], axis=0)
+    images = images / 255.
     
     _, h_old, w_old, _ = images.shape
     h_pad = (h_old // window_size + 1) * window_size - h_old
@@ -18,6 +22,9 @@ def prepare_inputs(images: List[PIL.Image], window_size=8):
 
 
 def numpy_to_pil(images: np.ndarray):
+    """
+        Convert a numpy image or a batch of images to a PIL image.
+    """
     images = np.asarray(images, dtype=np.float32)
     if images.ndim == 3:
         images = images[None, ...]

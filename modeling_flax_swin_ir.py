@@ -265,6 +265,7 @@ class SwinTransformerBlock(nn.Module):
         height, width = x_size
         batch, _, channels = hidden_states.shape
 
+        # (batch, num_patches, channels)
         residual = hidden_states
         hidden_states = self.norm1(hidden_states)
         hidden_states = hidden_states.reshape(batch, height, width, channels)
@@ -274,7 +275,9 @@ class SwinTransformerBlock(nn.Module):
             hidden_states = jnp.roll(hidden_states, shift=(-self.shift_size, -self.shift_size), axis=(1, 2))
 
         # cyclic shift
+        # (num_windows*batch, window_size, window_size, channels)
         hidden_states = window_partition(hidden_states, self.window_size)
+        # (num_windows*batch, window_size*window_size, channels)
         hidden_states = hidden_states.reshape(-1, self.window_size * self.window_size, channels)
 
         # W-MSA/SW-MSA
@@ -285,13 +288,16 @@ class SwinTransformerBlock(nn.Module):
             hidden_states = self.attn(hidden_states, mask=mask, deterministic=deterministic)
 
         # merge windows
+        # (num_windows*batch, window_size, window_size, channels)
         hidden_states = hidden_states.reshape(-1, self.window_size, self.window_size, channels)
+        # (batch, height, width, channels)
         hidden_states = window_reverse(hidden_states, self.window_size, height, width)
 
         # reverse cyclic shift
         if self.shift_size > 0:
             hidden_states = jnp.roll(hidden_states, shift=(self.shift_size, self.shift_size), axis=(1, 2))
 
+        # (batch, height*width, channels)
         hidden_states = hidden_states.reshape(batch, height * width, channels)
 
         # residual connection
@@ -328,7 +334,7 @@ class BasicLayer(nn.Module):
 
     def __call__(self, hidden_states, x_size, deterministic=True):
         for block in self.blocks:
-            hidden_states = block(hidden_states, x_size, deterministic=deterministic)
+            hidden_states = block(hidden_states, x_size, deterministic=deterministic)  # (batch, num_patches, channels)
         return hidden_states
 
 
@@ -410,10 +416,13 @@ class RSTB(nn.Module):
         )
 
     def __call__(self, hidden_states, x_size, deterministic=True):
+        # (batch, num_patches, channels)
         residual = hidden_states
         hidden_states = self.residual_group(hidden_states, x_size, deterministic=deterministic)
+        # (batch, height, width, channels)
         hidden_states = self.patch_unembed(hidden_states, x_size)
         hidden_states = self.conv(hidden_states)
+        # (batch, num_patches, channels)
         hidden_states = self.patch_embed(hidden_states)
         hidden_states = residual + hidden_states
         return hidden_states

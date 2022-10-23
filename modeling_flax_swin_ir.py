@@ -170,40 +170,42 @@ class WindowAttention(nn.Module):
 
     @nn.compact
     def __call__(self, hidden_states, mask=None, deterministic=True):
-        B_, N, C = hidden_states.shape
+        batch, num_patches, channels = hidden_states.shape  # (num_windows*batch, window_size*window_size, channels)
 
         qkv = jnp.transpose(
-            self.qkv(hidden_states).reshape(B_, N, 3, self.num_heads, C // self.num_heads), (2, 0, 3, 1, 4)
+            self.qkv(hidden_states).reshape(batch, num_patches, 3, self.num_heads, channels // self.num_heads),
+            (2, 0, 3, 1, 4),
         )
-        q, k, v = qkv[0], qkv[1], qkv[2]
-        q = q * self.scale
-        attn = jnp.einsum("...hqd,...hkd->...hqk", q, k)
+        query, key, value = qkv[0], qkv[1], qkv[2]
+        query = query * self.scale
+        attn_scores = jnp.einsum("...hqd,...hkd->...hqk", query, key)
 
         relative_position_bias = self.relative_position_bias_table[self.relative_position_index.reshape((-1,))]
         relative_position_bias = relative_position_bias.reshape(
             (self.window_size * self.window_size, self.window_size * self.window_size, -1)
         )  # Wh*Ww,Wh*Ww,nH
         relative_position_bias = jnp.transpose(relative_position_bias, (2, 0, 1))  # nH, Wh*Ww, Wh*Ww
-        attn = attn + jnp.expand_dims(relative_position_bias, axis=0)
+        attn_scores = attn_scores + jnp.expand_dims(relative_position_bias, axis=0)
 
         if mask is not None:
             nW = mask.shape[0]
-            attn = attn.reshape(B_ // nW, nW, self.num_heads, N, N) + jnp.expand_dims(mask, axis=(0, 2))
-            attn = attn.reshape(-1, self.num_heads, N, N)
-            attn = nn.softmax(attn, axis=-1)
+            attn_scores = attn_scores.reshape(
+                batch // nW, nW, self.num_heads, num_patches, num_patches
+            ) + jnp.expand_dims(mask, axis=(0, 2))
+            attn_scores = attn_scores.reshape(-1, self.num_heads, num_patches, num_patches)
+            attn_scores = nn.softmax(attn_scores, axis=-1)
         else:
-            attn = nn.softmax(attn, axis=-1)
+            attn_scores = nn.softmax(attn_scores, axis=-1)
 
-        attn = self.attn_drop(attn, deterministic=deterministic)
+        attn_scores = self.attn_drop(attn_scores, deterministic=deterministic)
 
-        # x = attn @ v
-        x = jnp.einsum("...hqk,...hkd->...hqd", attn, v)
-        x = jnp.swapaxes(x, 1, 2)
-        x = x.reshape(B_, N, C)
-        x = self.proj(x)
-        x = self.proj_drop(x, deterministic=deterministic)
+        hidden_states = jnp.einsum("...hqk,...hkd->...hqd", attn_scores, value)
+        hidden_states = jnp.swapaxes(hidden_states, 1, 2)
+        hidden_states = hidden_states.reshape(batch, num_patches, channels)
+        hidden_states = self.proj(hidden_states)
+        hidden_states = self.proj_drop(hidden_states, deterministic=deterministic)
 
-        return x
+        return hidden_states
 
 
 class SwinTransformerBlock(nn.Module):

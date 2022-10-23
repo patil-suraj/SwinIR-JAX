@@ -75,7 +75,7 @@ class PatchEmbed(nn.Module):
 
     @nn.compact
     def __call__(self, pixel_values):
-        hidden_states = to_patches(pixel_values, self.patch_size[0])
+        hidden_states = to_patches(pixel_values, self.patch_size[0]) # (batch, num_patches, channels)
 
         if self.patch_norm:
             hidden_states = self.norm(hidden_states)
@@ -95,9 +95,10 @@ class PatchUnEmbed(nn.Module):
 
     @nn.compact
     def __call__(self, hidden_states, x_size):
-        B, HW, C = hidden_states.shape
-        # x = jnp.transpose(hidden_states, (0, 2, 1))
-        hidden_states = hidden_states.reshape(B, x_size[0], x_size[1], self.embed_dim)  # B Ph*Pw C
+        # (batch, num_patches, channels)
+        batch, _, _ = hidden_states.shape 
+        # (batch, height, width, channels)
+        hidden_states = hidden_states.reshape(batch, x_size[0], x_size[1], self.embed_dim)
         return hidden_states
 
 

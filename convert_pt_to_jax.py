@@ -2,21 +2,15 @@ import argparse
 import re
 
 import jax.numpy as jnp
+import torch
 from flax.traverse_util import flatten_dict, unflatten_dict
 
-from swin_ir_jax import SwinIR, SwinIRConfig
+from swin_ir_jax import FlaxSwinIR, SwinIRConfig
 
 regex = r"\w+[.]\d+"
 
 
 def rename_key(key):
-    # key = key.replace("downsamplers.0", "downsample")
-    # key = key.replace("upsamplers.0", "upsample")
-    # key = key.replace("net.0.proj", "dense1")
-    # key = key.replace("net.2", "dense2")
-    # key = key.replace("to_out.0", "to_out")
-    # key = key.replace("attn1", "self_attn")
-    # key = key.replace("attn2", "cross_attn")
     key = key.replace("conv_after_body.", "conv_after_body.conv.")
 
     pats = re.findall(regex, key)
@@ -95,12 +89,60 @@ def convert_pytorch_state_dict_to_flax(pt_state_dict, flax_model):
     return unflatten_dict(flax_state_dict)
 
 
-def convert_params(pt_model, fx_model):
-    state_dict = pt_model.state_dict()
-    keys = list(state_dict.keys())
+def convert_params(pt_state_dict, fx_model):
+    keys = list(pt_state_dict.keys())
     for key in keys:
         renamed_key = rename_key(key)
-        state_dict[renamed_key] = state_dict.pop(key)
+        pt_state_dict[renamed_key] = pt_state_dict.pop(key)
 
-    fx_params = convert_pytorch_state_dict_to_flax(state_dict, fx_model)
+    fx_params = convert_pytorch_state_dict_to_flax(pt_state_dict, fx_model)
     return fx_params
+
+
+def convert_swin_to_jax(pt_model_path, save_path, task="real_sr", scale=4, large_model=True):
+    if task == "real_sr":
+        state_dict = torch.load(pt_model_path, map_location="cpu")
+        param_key_g = "params_ema"
+        state_dict = state_dict[param_key_g] if param_key_g in state_dict.keys() else state_dict
+
+        if large_model:
+            config = SwinIRConfig(
+                upscale=scale,
+                embed_dim=240,
+                depths=(6, 6, 6, 6, 6, 6, 6, 6, 6),
+                num_heads=(8, 8, 8, 8, 8, 8, 8, 8, 8),
+                window_size=8,
+                mlp_ratio=2,
+                upsampler="nearest+conv",
+                resi_connection="3conv",
+            )
+        else:
+            config = SwinIRConfig(
+                upscale=scale,
+                embed_dim=180,
+                depths=(6, 6, 6, 6, 6, 6),
+                num_heads=(6, 6, 6, 6, 6, 6),
+                window_size=8,
+                mlp_ratio=2,
+                upsampler="nearest+conv",
+                resi_connection="1conv",
+            )
+
+        fx_model = FlaxSwinIR(config, _do_init=False)
+        fx_params = convert_params(state_dict, fx_model)
+        fx_model.save_pretrained(save_path, params=fx_params)
+        return fx_model, fx_params
+    else:
+        raise NotImplementedError("Only real_sr task is supported")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--pt_model_path", type=str, required=True)
+    parser.add_argument("--save_path", type=str, required=True)
+    parser.add_argument("--task", type=str, default="real_sr", required=False)
+    parser.add_argument("--scale", type=int, default=4, required=False)
+    parser.add_argument("--large_model", action="store_true", default=False, required=False)
+    args = parser.parse_args()
+
+    convert_swin_to_jax(args.pt_model_path, args.save_path, args.task, args.scale, args.large_model)

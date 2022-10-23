@@ -64,6 +64,7 @@ class PatchEmbed(nn.Module):
     img_size: Tuple[int] = (224, 224)
     patch_size: Tuple[int] = (4, 4)
     patch_norm: bool = True
+    dtype: jnp.dtype = jnp.float32
 
     def setup(self):
         patches_resolution = [self.img_size[0] // self.patch_size[0], self.img_size[1] // self.patch_size[1]]
@@ -71,11 +72,11 @@ class PatchEmbed(nn.Module):
         self.num_patches = patches_resolution[0] * patches_resolution[1]
 
         if self.patch_norm:
-            self.norm = nn.LayerNorm(epsilon=1e-05)
+            self.norm = nn.LayerNorm(epsilon=1e-05, dtype=self.dtype)
 
     @nn.compact
     def __call__(self, pixel_values):
-        hidden_states = to_patches(pixel_values, self.patch_size[0]) # (batch, num_patches, channels)
+        hidden_states = to_patches(pixel_values, self.patch_size[0])  # (batch, num_patches, channels)
 
         if self.patch_norm:
             hidden_states = self.norm(hidden_states)
@@ -96,7 +97,7 @@ class PatchUnEmbed(nn.Module):
     @nn.compact
     def __call__(self, hidden_states, x_size):
         # (batch, num_patches, channels)
-        batch, _, _ = hidden_states.shape 
+        batch, _, _ = hidden_states.shape
         # (batch, height, width, channels)
         hidden_states = hidden_states.reshape(batch, x_size[0], x_size[1], self.embed_dim)
         return hidden_states
@@ -107,6 +108,7 @@ class MLP(nn.Module):
     dtype: Dtype = jnp.float32
     out_dim: Optional[int] = None
     dropout_rate: float = 0.1
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     @nn.compact
     def __call__(self, hidden_states, deterministic=True):
@@ -116,6 +118,7 @@ class MLP(nn.Module):
             nn.Dense,
             kernel_init=nn.initializers.xavier_uniform(),
             bias_init=nn.initializers.normal(stddev=1e-6),
+            dtype=self.dtype,
         )
 
         hidden_states = Dense(features=self.hidden_dim, name="fc1")(hidden_states)
@@ -134,6 +137,7 @@ class WindowAttention(nn.Module):
     qk_scale: Optional[float] = None
     attn_drop_rate: Optional[float] = 0.0
     proj_drop_rate: Optional[float] = 0.0
+    dtype: jnp.dtype = jnp.float32  # the dtype of the computation
 
     def setup(self):
         self.head_dim = self.dim // self.num_heads
@@ -158,10 +162,10 @@ class WindowAttention(nn.Module):
         relative_coords[:, :, 0] *= 2 * self.window_size - 1
         self.relative_position_index = np.sum(relative_coords, axis=-1)  # Wh*Ww, Wh*Wwbn
 
-        self.qkv = nn.Dense(features=self.dim * 3, use_bias=self.qkv_bias)
+        self.qkv = nn.Dense(features=self.dim * 3, use_bias=self.qkv_bias, dtype=self.dtype)
 
         self.attn_drop = nn.Dropout(rate=self.attn_drop_rate)
-        self.proj = nn.Dense(features=self.dim)
+        self.proj = nn.Dense(features=self.dim, dtype=self.dtype)
         self.proj_drop = nn.Dropout(rate=self.proj_drop_rate)
 
     @nn.compact
@@ -218,7 +222,7 @@ class SwinTransformerBlock(nn.Module):
 
         assert 0 <= self.shift_size < self.window_size, "shift_size must in 0-window_size"
 
-        self.norm1 = nn.LayerNorm(epsilon=1e-05)
+        self.norm1 = nn.LayerNorm(epsilon=1e-05, dtype=self.dtype)
         self.attn = WindowAttention(
             self.config.embed_dim,
             window_size=self.window_size,
@@ -226,11 +230,12 @@ class SwinTransformerBlock(nn.Module):
             qkv_bias=self.config.qkv_bias,
             attn_drop_rate=self.config.attn_drop_rate,
             proj_drop_rate=self.config.drop_rate,
+            dtype=self.dtype,
         )
 
-        self.norm2 = nn.LayerNorm(epsilon=1e-05)
+        self.norm2 = nn.LayerNorm(epsilon=1e-05, dtype=self.dtype)
         mlp_hidden_dim = int(self.config.embed_dim * self.config.mlp_ratio)
-        self.mlp = MLP(hidden_dim=mlp_hidden_dim, dropout_rate=self.config.drop_rate)
+        self.mlp = MLP(hidden_dim=mlp_hidden_dim, dropout_rate=self.config.drop_rate, dtype=self.dtype)
 
         if self.shift_size > 0:
             self.attn_mask = self.create_attn_mask(self.shift_size, self.input_resolution, self.window_size)
@@ -401,14 +406,15 @@ class RSTB(nn.Module):
                 kernel_size=(3, 3),
                 strides=(1, 1),
                 padding=((1, 1), (1, 1)),
+                dtype=self.dtype,
             )
         elif self.config.resi_connection == "3conv":
-            self.conv = Conv3Block(self.embed_dim)
+            self.conv = Conv3Block(self.embed_dim, dtype=self.dtype)
         else:
             raise ValueError(f"Unknown resi_connection {self.config.resi_connection}")
 
         self.patch_embed = PatchEmbed(
-            img_size=self.config.img_size, patch_size=self.config.patch_size, patch_norm=False
+            img_size=self.config.img_size, patch_size=self.config.patch_size, patch_norm=False, dtype=self.dtype
         )
 
         self.patch_unembed = PatchUnEmbed(
@@ -463,7 +469,7 @@ class SwinIRModule(nn.Module):
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
-            img_size=self.img_size, patch_size=self.patch_size, patch_norm=self.config.patch_norm
+            img_size=self.img_size, patch_size=self.patch_size, patch_norm=self.config.patch_norm, dtype=self.dtype
         )
         self.patches_resolution = (
             self.img_size[0] // self.patch_size[0],
@@ -491,13 +497,13 @@ class SwinIRModule(nn.Module):
             layers.append(layer)
         self.layers = layers
 
-        self.norm = nn.LayerNorm(epsilon=1e-5)
+        self.norm = nn.LayerNorm(epsilon=1e-5, dtype=self.dtype)
 
         # build the last conv layer in deep feature extraction
         if self.config.resi_connection == "1conv":
             self.conv_after_body = conv_3x1X1(self.embed_dim)
         elif self.config.resi_connection == "3conv":
-            self.conv_after_body = Conv3Block(self.embed_dim)
+            self.conv_after_body = Conv3Block(self.embed_dim, dtype=self.dtype)
 
         #####################################################################################################
         ################################ 3, high quality image reconstruction ################################
@@ -534,24 +540,25 @@ class SwinIRModule(nn.Module):
 
             # body
             x_size = (hidden_states.shape[1], hidden_states.shape[2])
-            hidden_states = self.patch_embed(hidden_states) # (batch, num_patches, channels)
-            
+            hidden_states = self.patch_embed(hidden_states)  # (batch, num_patches, channels)
+
             if self.config.ape:
                 hidden_states = hidden_states + self.absolute_pos_embed
 
             for layer in self.layers:
-                hidden_states = layer(hidden_states, x_size, deterministic=deterministic) # (batch, num_patches, channels)
+                hidden_states = layer(
+                    hidden_states, x_size, deterministic=deterministic
+                )  # (batch, num_patches, channels)
 
             hidden_states = self.norm(hidden_states)
-            hidden_states = self.patch_unembed(hidden_states, x_size) # (batch, height, width, channels)
+            hidden_states = self.patch_unembed(hidden_states, x_size)  # (batch, height, width, channels)
 
             # end of body
-            
+
             hidden_states = self.conv_after_body(hidden_states) + residuel
-            
+
             hidden_states = self.conv_before_upsample(hidden_states)
             hidden_states = nn.leaky_relu(hidden_states)
-
             # upsample 2x
             batch, height, width, channel = hidden_states.shape
             hidden_states = jax.image.resize(
@@ -561,7 +568,7 @@ class SwinIRModule(nn.Module):
             )
             hidden_states = self.conv_up1(hidden_states)
             hidden_states = nn.leaky_relu(hidden_states, negative_slope=0.2)
-            
+
             if self.config.upscale == 4:
                 # upsample 2x
                 batch, height, width, channel = hidden_states.shape
@@ -572,7 +579,7 @@ class SwinIRModule(nn.Module):
                 )
                 hidden_states = self.conv_up2(hidden_states)
                 hidden_states = nn.leaky_relu(hidden_states, negative_slope=0.2)
-            
+
             hidden_states = self.conv_hr(hidden_states)
             hidden_states = nn.leaky_relu(hidden_states, negative_slope=0.2)
             hidden_states = self.conv_last(hidden_states)

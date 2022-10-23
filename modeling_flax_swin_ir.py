@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple
 
 import jax
 import numpy as np
@@ -9,18 +9,6 @@ from jax import numpy as jnp
 from transformers import FlaxPreTrainedModel
 
 from configuration_swin_ir import SwinIRConfig
-
-Array = Any
-PRNGKey = Any
-Shape = Tuple[int]
-Dtype = Any
-
-# TODOs:
-# - Add config file
-# - Test the attention layer
-# - Wrap model with transformers
-# - Make forward pass work.
-# - Port the weights and test equivalence.
 
 
 def window_partition(tensor, window_size):
@@ -105,7 +93,6 @@ class PatchUnEmbed(nn.Module):
 
 class MLP(nn.Module):
     hidden_dim: int
-    dtype: Dtype = jnp.float32
     out_dim: Optional[int] = None
     dropout_rate: float = 0.1
     dtype: jnp.dtype = jnp.float32  # the dtype of the computation

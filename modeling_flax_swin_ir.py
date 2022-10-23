@@ -568,6 +568,7 @@ class SwinIRModule(nn.Module):
 
     def __call__(self, pixel_values, deterministic=True):
         H, W = pixel_values.shape[1], pixel_values.shape[2]
+        
         pixel_values = self.check_image_size(pixel_values)
         pixel_values = (pixel_values - self.rgb_mean) * self.img_range
 
@@ -586,18 +587,18 @@ class SwinIRModule(nn.Module):
                 method="nearest",
             )
             x = self.conv_up1(x)
-            x = nn.leaky_relu(x)
+            x = nn.leaky_relu(x, negative_slope=0.2)
             if self.upscale == 4:
                 batch, height, width, channel = x.shape
                 x = jax.image.resize(
                     x,
-                    shape=(batch, height * 4, width * 4, channel),
+                    shape=(batch, height * 2, width * 2, channel),
                     method="nearest",
                 )
                 x = self.conv_up2(x)
-                x = nn.leaky_relu(x)
+                x = nn.leaky_relu(x, negative_slope=0.2)
             x = self.conv_hr(x)
-            x = nn.leaky_relu(x)
+            x = nn.leaky_relu(x, negative_slope=0.2)
             x = self.conv_last(x)
         else:
             raise NotImplementedError

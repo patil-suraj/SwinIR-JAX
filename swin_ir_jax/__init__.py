@@ -4,6 +4,7 @@ import numpy as np
 import PIL
 
 from .configuration_swin_ir import SwinIRConfig
+from .modeling_flax_swin2_sr import FlaxSwin2SR
 from .modeling_flax_swin_ir import FlaxSwinIR
 
 

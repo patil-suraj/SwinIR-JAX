@@ -176,14 +176,6 @@ class WindowAttention(nn.Module):
             jnp.sign(relative_coords_table) * jnp.log2(jnp.abs(relative_coords_table) + 1.0) / jnp.log2(8)
         )
 
-        bias_shape = (
-            (2 * self.window_size - 1) * (2 * self.window_size - 1),
-            self.num_heads,
-        )  # # 2*Wh-1 * 2*Ww-1, nH
-        self.relative_position_bias_table = self.param(
-            "relative_position_bias_table", nn.initializers.normal(0.02), bias_shape
-        )
-
         # get pair-wise relative position index for each token inside the window
         coords_h = np.arange(self.window_size)
         coords_w = np.arange(self.window_size)
@@ -218,8 +210,8 @@ class WindowAttention(nn.Module):
         value = value.reshape(batch, num_patches, self.num_heads, channels // self.num_heads).transpose((0, 2, 1, 3))
 
         # cosine attention
-        query = jnp.linalg.norm(query, axis=-1, keepdims=True)
-        key = jnp.linalg.norm(key, axis=-1, keepdims=True)
+        query = query / jnp.linalg.norm(query, axis=-1, keepdims=True)
+        key = key / jnp.linalg.norm(key, axis=-1, keepdims=True)
         attn_scores = jnp.einsum("...hqd,...hkd->...hqk", query, key)
         logit_scale = jnp.exp(jnp.clip(self.logit_scale, a_max=jnp.log(1.0 / 0.01)))
         attn_scores *= logit_scale

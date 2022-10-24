@@ -87,7 +87,7 @@ def convert_pytorch_state_dict_to_flax(pt_state_dict, flax_model):
     return unflatten_dict(flax_state_dict)
 
 
-def convert_params(pt_state_dict, fx_model, resi_connection):
+def convert_params(pt_state_dict, fx_model, resi_connection="1conv"):
     keys = list(pt_state_dict.keys())
     for key in keys:
         if "relative_position_index" in key or "attn_mask" in key:

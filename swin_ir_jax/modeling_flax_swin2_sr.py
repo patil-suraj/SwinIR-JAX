@@ -49,19 +49,20 @@ def to_patches(image, patch_size):
 
 
 class PatchEmbed(nn.Module):
-    img_size: Tuple[int] = (224, 224)
-    patch_size: Tuple[int] = (4, 4)
-    patch_norm: bool = True
+    config: SwinIRConfig
+    patch_norm: bool = False
     dtype: jnp.dtype = jnp.float32
 
     def setup(self):
+        self.img_size = self.config.img_size
+        self.patch_size = self.config.patch_size
+
         patches_resolution = [self.img_size[0] // self.patch_size[0], self.img_size[1] // self.patch_size[1]]
         self.patches_resolution = patches_resolution
         self.num_patches = patches_resolution[0] * patches_resolution[1]
 
-        # self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
         self.proj = nn.Conv(
-            self.embed_dim,
+            self.config.embed_dim,
             kernel_size=self.patch_size,
             strides=self.patch_size,
             padding="VALID",
@@ -157,19 +158,19 @@ class WindowAttention(nn.Module):
         self.cpb_mlp = CbpMLP(num_heads=self.num_heads, dtype=self.dtype)
 
         # get relative_coords_table
-        relative_coords_h = jnp.arange(-(self.window_size[0] - 1), self.window_size[0], dtype=jnp.float32)
-        relative_coords_w = jnp.arange(-(self.window_size[1] - 1), self.window_size[1], dtype=jnp.float32)
+        relative_coords_h = np.arange(-(self.window_size - 1), self.window_size, dtype=np.float32)
+        relative_coords_w = np.arange(-(self.window_size - 1), self.window_size, dtype=np.float32)
 
-        relative_coords_table = jnp.stack(jnp.meshgrid([relative_coords_h, relative_coords_w]))
+        relative_coords_table = np.stack(np.meshgrid(relative_coords_h, relative_coords_w))
         relative_coords_table = relative_coords_table.transpose(1, 2, 0)  # 1, 2*Wh-1, 2*Ww-1, 2
-        relative_coords_table = jnp.expand_dims(relative_coords_table, axis=0)
+        relative_coords_table = np.expand_dims(relative_coords_table, axis=0)
 
         if self.pretrained_window_size[0] > 0:
             relative_coords_table[:, :, :, 0] /= self.pretrained_window_size[0] - 1
             relative_coords_table[:, :, :, 1] /= self.pretrained_window_size[1] - 1
         else:
-            relative_coords_table[:, :, :, 0] /= self.window_size[0] - 1
-            relative_coords_table[:, :, :, 1] /= self.window_size[1] - 1
+            relative_coords_table[:, :, :, 0] /= self.window_size - 1
+            relative_coords_table[:, :, :, 1] /= self.window_size - 1
         relative_coords_table *= 8  # normalize to -8, 8
         self.relative_coords_table = (
             jnp.sign(relative_coords_table) * jnp.log2(jnp.abs(relative_coords_table) + 1.0) / jnp.log2(8)
@@ -223,7 +224,8 @@ class WindowAttention(nn.Module):
         logit_scale = jnp.exp(jnp.clip(self.logit_scale, a_max=jnp.log(1.0 / 0.01)))
         attn_scores *= logit_scale
 
-        relative_position_bias_table = self.cpb_mlp(self.relative_coords_table).view(-1, self.num_heads)
+        relative_position_bias_table = self.cpb_mlp(self.relative_coords_table)
+        relative_position_bias_table = jnp.reshape(relative_position_bias_table, (-1, self.num_heads))
         relative_position_bias = relative_position_bias_table[self.relative_position_index.reshape((-1,))]
         relative_position_bias = relative_position_bias.reshape(
             (self.window_size * self.window_size, self.window_size * self.window_size, -1)
@@ -460,9 +462,7 @@ class RSTB(nn.Module):
         else:
             raise ValueError(f"Unknown resi_connection {self.config.resi_connection}")
 
-        self.patch_embed = PatchEmbed(
-            img_size=self.config.img_size, patch_size=self.config.patch_size, patch_norm=False, dtype=self.dtype
-        )
+        self.patch_embed = PatchEmbed(self.config, patch_norm=False, dtype=self.dtype)
 
         self.patch_unembed = PatchUnEmbed(
             img_size=self.config.img_size, patch_size=self.config.patch_size, embed_dim=self.embed_dim
@@ -515,9 +515,7 @@ class Swin2SRModule(nn.Module):
         ################################### 2, deep feature extraction ######################################
 
         # split image into non-overlapping patches
-        self.patch_embed = PatchEmbed(
-            img_size=self.img_size, patch_size=self.patch_size, patch_norm=self.config.patch_norm, dtype=self.dtype
-        )
+        self.patch_embed = PatchEmbed(self.config, patch_norm=True, dtype=self.dtype)
         self.patches_resolution = (
             self.img_size[0] // self.patch_size[0],
             self.img_size[1] // self.patch_size[1],
@@ -556,7 +554,7 @@ class Swin2SRModule(nn.Module):
         ################################ 3, high quality image reconstruction ################################
         if self.config.upsampler == "nearest+conv":
             # for real-world SR (less artifacts)
-            assert self.upscale == 4, "only support x4 now."
+            assert self.config.upscale == 4, "only support x4 now."
             self.conv_before_upsample = conv_3x1X1(self.num_feat, name="conv_before_upsample_0")
             self.conv_up1 = conv_3x1X1(self.num_feat)
             self.conv_up2 = conv_3x1X1(self.num_feat)
